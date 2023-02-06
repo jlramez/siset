@@ -29,5 +29,5 @@ class Actividade extends Model
 		return $this->HasOne(Area::class,'id','areas_id');
 
 	}
-//prueba git	
+//prueba git	...
 }

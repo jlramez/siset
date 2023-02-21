@@ -9,30 +9,87 @@ use App\Models\Actividade;
 use App\Models\Empleado;
 use App\Models\Atarea;
 use App\Models\Estado;
+use App\Models\Area;
+use App\Models\Puesto;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
+use Spatie\Permission\Traits\HasPermissions;
+use Spatie\Permission\Traits\HasRoles;
+use Carbon\Carbon;
 
 class Tareas extends Component
 {
     use WithPagination;
 
 	protected $paginationTheme = 'bootstrap';
-    public $selected_id, $keyWord, $descripcion, $actividades_id,$estados_id,$empleados_id;
+    public $selected_id, $keyWord, $descripcion, $actividades_id,$estados_id,$empleados_id, $fecha_entrega;
     public $updateMode = false;
 
     public function render()
     {
-	
+	            $id_user=auth()->user()->id;
+                $empleado=Empleado::where('users_id', $id_user)->first();
+                $area_id=$empleado->puesto->area->id;
+                $area=Area::find($area_id);
+                $nivel_jefe_superior=Puesto::where('areas_id',$area_id)->max('niveles_id');
+
+        $usuariosConRol = Role::whereHas("permissions", function($q){ $q->where("name", "registros.index"); })->get();
+        $id_rol_usuario=auth()->user()->roles()->first()->id; //id users role
+        $rol=role::where('id',$id_rol_usuario)->first();//recorset role
+        $keyWord = '%'.$this->keyWord .'%';
+        switch($rol->name) 
+        {
+             case('admin'): //administrador
+               $tareas=Tarea::Latest()->paginate(10);
+               $actividades=Actividade::Latest()->paginate(10);
+               $empleados=Empleado::all();
+               $actividades_full=Actividade::all();
+ 
+             break;
+                 
+            case('secretaria'): //secretaria
+ 
+               $tareas=Tarea::Latest()->paginate(10);//todas las tareas
+               $actividades=Actividade::Latest()->paginate(10);//todas las actividades
+               $empleados=Empleado::all();//todos los empleados
+               $actividades_full=Actividade::all();
+               
+ 
+                break;
+                 
+            case('sub_secretaria'): //sub_secretaria
+ 
+               $tareas=Tarea::join('actividades','actividades_id', '=', 'actividades.id')->join('areas','areas.id', '=','actividades.areas_id')->where('areas.id','=',$area_id)-> select('tareas.*')
+                     ->paginate(10);
+                     $actividades=Actividade::where('areas_id',$area_id)->paginate(10);
+                     $actividades_full= Actividade::where('areas_id',$area_id)->get();
+
+                     $empleados=Empleado::join('puestos','puestos_id','=','puestos.id')->where('puestos.superior','=',$area_id)->select('empleados.*')->paginate(10); 
+                break;
+                default:
+                    
+                    $tareas=Tarea::join('actividades','actividades_id', '=', 'actividades.id')->select('tareas.*')->where('actividades.areas_id',$area_id)
+                     ->paginate(10);         
+                     $actividades=Actividade::where('areas_id',$area_id)->paginate(10);
+                     $actividades_full= Actividade::where('areas_id',$area_id)->get();
+                     $empleados=Empleado::join('puestos','puestos_id', '=', 'puestos.id')->select('empleados.*')->where('puestos.areas_id',$area_id)->paginate(10);
+        }
+
+
                 $keyWord = '%'.$this->keyWord .'%';
                 return view('livewire.tareas.view', [
                     'estados' => Estado::all(),
                     'atareas' => Atarea::all(),
-                    'empleados' => Empleado::all(),
-                    'actividades' => Actividade::all(),
-                    'tareas' => Tarea::latest()
-                                ->orWhere('descripcion', 'LIKE', $keyWord)
-                                ->orWhere('actividades_id', 'LIKE', $keyWord)
-                                ->orWhere('estados_id', 'LIKE', $keyWord)
-                                ->paginate(10),
-                ]);            
+                    'empleados' => $empleados,
+                    'actividades' => $actividades,
+                    'tareas' => $tareas,
+                    'actividades_full'=> $actividades_full,
+                    /*Tarea::join('actividades','actividades_id', '=', 'actividades.id')->select('tareas.*')->where('actividades.areas_id',$area_id)
+                     /*->orWhere('descripcion', 'LIKE', $keyWord)
+                     ->orWhere('actividades_id', 'LIKE', $keyWord)
+                     ->orWhere('estados_id', 'LIKE', $keyWord)
+                     ->paginate(10),*/
+                     ]);
     }
 	
     public function cancel()
@@ -52,12 +109,15 @@ class Tareas extends Component
         $this->validate([
 		'descripcion' => 'required',
 		'actividades_id' => 'required',
-        ]);
+        'fecha_entrega' => 'required',
+    ]);
          $estados_id=1;
+        $fechaentrega= Carbon::createFromFormat('Y-m-d', $this->fecha_entrega)->format('Y-m-d');
         Tarea::create([ 
 			'descripcion' => $this-> descripcion,
 			'actividades_id' => $this-> actividades_id,
-            'estados_id' => $estados_id
+            'estados_id' => $estados_id,
+             'fecha_entrega' => $fechaentrega
         ]);
         
         $this->resetInput();
@@ -67,11 +127,14 @@ class Tareas extends Component
 
     public function edit($id)
     {
+      
         $record = Tarea::findOrFail($id);
+
 
         $this->selected_id = $id; 
 		$this->descripcion = $record-> descripcion;
 		$this->actividades_id = $record-> actividades_id;
+         $this->fecha_entrega=$record-> fecha_entrega;
 		
         $this->updateMode = true;
     }
@@ -81,13 +144,17 @@ class Tareas extends Component
         $this->validate([
 		'descripcion' => 'required',
 		'actividades_id' => 'required',
+        'fecha_entrega' => 'required'
         ]);
-
-        if ($this->selected_id) {
-			$record = Tarea::find($this->selected_id);
+        $fechaentrega= Carbon::createFromFormat('Y-m-d', $this->fecha_entrega)->format('Y-m-d');
+        if ($this->selected_id) 
+        {
+			
+            $record = Tarea::find($this->selected_id);
             $record->update([ 
 			'descripcion' => $this-> descripcion,
-			'actividades_id' => $this-> actividades_id
+			'actividades_id' => $this-> actividades_id,
+            'fecha_entrega' => $fechaentrega
             ]);
 
             $this->resetInput();
